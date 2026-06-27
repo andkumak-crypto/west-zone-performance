@@ -328,43 +328,57 @@ export async function fetchGoogleSheetData(
       
       let isHeader = false;
       
-      // Look for the word "timing" or "time" in the first 3 columns
-      for (let c = 0; c < Math.min(row.length, 3); c++) {
-        const val = (row[c] || "").toLowerCase().trim();
-        if (val === "timing" || val.includes("timing") || val === "time" || val === "timings") {
-          isHeader = true;
-          break;
-        }
-      }
+      let hasTimingCell = false;
+      let hasTrainerCell = false;
+      let hasCompletedCell = false;
       
-      // Or check if the row has "trainer name" / "trainer" and "completed" headers
-      if (!isHeader) {
-        let trainerColCount = 0;
-        let hasCompletedHeader = false;
-        row.forEach(cell => {
-          const norm = (cell || "").toLowerCase().trim().replace(/[:\s]+/g, " ");
-          if (
-            norm === "trainer" ||
-            norm === "trainers" ||
-            norm === "trainer name" ||
-            norm === "trainer s name" ||
-            norm === "trainers name" ||
-            norm === "coach" ||
-            norm === "coaches" ||
-            norm.includes("trainer name") ||
-            norm.includes("trainer's name") ||
-            norm.includes("trainers name")
-          ) {
-            trainerColCount++;
-          }
-          if (norm.includes("completed")) {
-            hasCompletedHeader = true;
-          }
-        });
-        
-        if (trainerColCount >= 2 || (trainerColCount >= 1 && hasCompletedHeader)) {
-          isHeader = true;
+      row.forEach(cell => {
+        const val = (cell || "").toLowerCase().trim().replace(/[:\s]+/g, " ");
+        if (
+          val === "timing" || 
+          val.includes("timing") || 
+          val === "time" || 
+          val === "timings" || 
+          val.includes("time slot") || 
+          val.includes("hour") || 
+          val.includes("shift") || 
+          val === "schedule"
+        ) {
+          hasTimingCell = true;
         }
+        if (
+          val === "trainer" ||
+          val === "trainers" ||
+          val === "trainer name" ||
+          val === "trainer s name" ||
+          val === "trainers name" ||
+          val === "coach" ||
+          val === "coaches" ||
+          val === "name" ||
+          val === "tl" ||
+          val === "staff" ||
+          val === "agent" ||
+          val.includes("trainer") ||
+          val.includes("coach") ||
+          val.includes("staff") ||
+          val.includes("name of")
+        ) {
+          hasTrainerCell = true;
+        }
+        if (
+          val.includes("completed") ||
+          val.includes("closed") ||
+          val.includes("done") ||
+          val.includes("ticket") ||
+          val.includes("count") ||
+          val.includes("total")
+        ) {
+          hasCompletedCell = true;
+        }
+      });
+      
+      if (hasTimingCell || (hasTrainerCell && hasCompletedCell)) {
+        isHeader = true;
       }
       
       if (isHeader) {
@@ -420,21 +434,68 @@ export async function fetchGoogleSheetData(
       const trainerNameColIndices: number[] = [];
       blockHeader.forEach((cell, idx) => {
         const norm = (cell || "").toLowerCase().trim().replace(/[:\s]+/g, " ");
+        const normClean = norm.replace(/[^a-z0-9]/g, "");
         if (
           norm === "trainer" ||
           norm === "trainers" ||
-          norm === "trainer name" ||
-          norm === "trainer s name" ||
-          norm === "trainers name" ||
           norm === "coach" ||
           norm === "coaches" ||
-          norm.includes("trainer name") ||
-          norm.includes("trainer's name") ||
-          norm.includes("trainers name")
+          norm === "name" ||
+          norm === "tl" ||
+          norm === "agent" ||
+          norm === "staff" ||
+          norm.includes("trainer") ||
+          norm.includes("coach") ||
+          norm.includes("staff") ||
+          normClean.includes("trainer") ||
+          normClean.includes("coach") ||
+          normClean.includes("staff") ||
+          normClean.includes("name")
         ) {
           trainerNameColIndices.push(idx);
         }
       });
+
+      // Semantic Column Identification fallback
+      if (trainerNameColIndices.length === 0) {
+        const timingPattern = /\b(am|pm|am\s*-|pm\s*-|\d{1,2}\s*:\s*\d{2})\b/i;
+        const numberPattern = /^\d+$/;
+        
+        for (let colIdx = 1; colIdx < blockHeader.length; colIdx++) {
+          let nameLikeCount = 0;
+          let rowCountWithData = 0;
+          
+          for (let r = 1; r < blockRows.length; r++) {
+            const row = blockRows[r];
+            if (!row || row.length <= colIdx) continue;
+            const val = (row[colIdx] || "").trim();
+            const normVal = val.toLowerCase();
+            
+            if (val !== "" && val !== "—" && val !== "-") {
+              rowCountWithData++;
+              if (
+                !numberPattern.test(val) &&
+                !timingPattern.test(val) &&
+                val.length >= 2 &&
+                val.length <= 30 &&
+                !normVal.includes("total") &&
+                !normVal.includes("timing") &&
+                !normVal.includes("completed") &&
+                !normVal.includes("ticket") &&
+                !normVal.includes("closed") &&
+                !normVal.includes("available") &&
+                !normVal.includes("schedule")
+              ) {
+                nameLikeCount++;
+              }
+            }
+          }
+          
+          if (nameLikeCount >= 2 || (rowCountWithData > 0 && nameLikeCount === rowCountWithData)) {
+            trainerNameColIndices.push(colIdx);
+          }
+        }
+      }
 
       if (trainerNameColIndices.length > 1) {
         // ==========================================
@@ -517,10 +578,12 @@ export async function fetchGoogleSheetData(
             }
 
             const rawCompleted = (row[completedColIdx] || "").trim();
+            const trainerNameInCell = (row[colIdx] || "").trim();
+            const hasTrainerName = trainerNameInCell !== "" && trainerNameInCell !== "—" && trainerNameInCell.toLowerCase() === trainerName.toLowerCase();
             
             let isCompleted = false;
             let isSpecial = false;
-            let isScheduled = false;
+            let isScheduled = hasTrainerName;
 
             if (rawCompleted !== "" && rawCompleted !== "—") {
               isScheduled = true;
@@ -629,10 +692,9 @@ export async function fetchGoogleSheetData(
           
           let isCompleted = false;
           let isSpecial = false;
-          let isScheduled = false;
+          let isScheduled = true;
 
           if (rawCompleted !== "" && rawCompleted !== "—") {
-            isScheduled = true;
             if (rawCompleted !== "0") {
               isCompleted = true;
             }
@@ -793,6 +855,7 @@ export interface TrainerPerformanceRow {
   workingDays: number;
   productivityDay: number;
   productivityPct: string;
+  region?: string;
 }
 
 export interface WestZonePerformanceData {
@@ -845,6 +908,25 @@ export async function fetchWestZonePerformanceData(
     const workingDaysIdx = header.findIndex(h => h.includes("working"));
     const prodDayIdx = header.findIndex(h => h.includes("productivity day") || h.includes("productivity d"));
     const prodPctIdx = header.findIndex(h => h.includes("productivity %") || (h.includes("productivity") && !h.includes("day") && !h.includes(" d")));
+    // Auto-detect region column by scanning the first 15 data rows if not found via header name
+    let autoRegionIdx = -1;
+    for (let r = 1; r < Math.min(rows.length, 16); r++) {
+      if (autoRegionIdx !== -1) break;
+      const rCells = rows[r];
+      if (!rCells) continue;
+      for (let c = 0; c < rCells.length; c++) {
+        const val = (rCells[c] || "").toLowerCase().trim();
+        if (
+          val === "mumbai" || val === "pune" || val === "rom & goa" || val === "rom&goa" || 
+          val === "rom" || val === "goa" || val === "r.o.m" || val.includes("rom &") || val === "mum" || val === "pun"
+        ) {
+          autoRegionIdx = c;
+          break;
+        }
+      }
+    }
+
+    const regionIdx = header.findIndex(h => h.includes("region") || h.includes("zone") || h.includes("city") || h.includes("branch") || h.includes("location") || h.includes("team"));
 
     // Safe fallbacks for column indices if not found exactly by substring
     const colTL = tlIdx !== -1 ? tlIdx : 0;
@@ -856,6 +938,7 @@ export async function fetchWestZonePerformanceData(
     const colWorkingDays = workingDaysIdx !== -1 ? workingDaysIdx : 6;
     const colProdDay = prodDayIdx !== -1 ? prodDayIdx : 7;
     const colProdPct = prodPctIdx !== -1 ? prodPctIdx : 8;
+    const colRegion = regionIdx !== -1 ? regionIdx : (autoRegionIdx !== -1 ? autoRegionIdx : -1);
 
     const parsedRows: TrainerPerformanceRow[] = [];
     let totals = {
@@ -871,13 +954,29 @@ export async function fetchWestZonePerformanceData(
 
       const trainerName = (row[colTrainer] || "").trim();
       const tlName = (row[colTL] || "").trim();
+      const lowerTrainer = trainerName.toLowerCase();
+      const lowerTl = tlName.toLowerCase();
 
-      // Check if this is the Grand Total row
-      if (trainerName.toLowerCase() === "grand total" || (!tlName && trainerName.toLowerCase().includes("total"))) {
-        totals.physicalVisit = parseInt((row[colPhysical] || "").replace(/[^\d]/g, "")) || totals.physicalVisit;
-        totals.virtual = parseInt((row[colVirtual] || "").replace(/[^\d]/g, "")) || totals.virtual;
-        totals.outOfStation = parseInt((row[colOOS] || "").replace(/[^\d]/g, "")) || totals.outOfStation;
-        totals.totalTraining = parseInt((row[colTotalTraining] || "").replace(/[^\d]/g, "")) || totals.totalTraining;
+      // STRICT SKIPPING OF SUB-TOTALS & GRAND TOTALS TO PREVENT DOUBLE COUNTING
+      if (
+        lowerTrainer.includes("total") ||
+        lowerTl.includes("total") ||
+        lowerTrainer.includes("subtotal") ||
+        lowerTl.includes("subtotal") ||
+        lowerTrainer === "grand total" ||
+        lowerTrainer === "all" ||
+        lowerTrainer.includes("sum of") ||
+        lowerTrainer === "trainer" ||
+        lowerTrainer === "name" ||
+        lowerTrainer === "name of trainer"
+      ) {
+        // If it's the official grand total, we can extract the values
+        if (lowerTrainer === "grand total" || lowerTrainer === "total" || (!tlName && lowerTrainer.includes("total"))) {
+          totals.physicalVisit = parseInt((row[colPhysical] || "").replace(/[^\d]/g, "")) || totals.physicalVisit;
+          totals.virtual = parseInt((row[colVirtual] || "").replace(/[^\d]/g, "")) || totals.virtual;
+          totals.outOfStation = parseInt((row[colOOS] || "").replace(/[^\d]/g, "")) || totals.outOfStation;
+          totals.totalTraining = parseInt((row[colTotalTraining] || "").replace(/[^\d]/g, "")) || totals.totalTraining;
+        }
         continue;
       }
 
@@ -891,6 +990,45 @@ export async function fetchWestZonePerformanceData(
       const prodDayVal = parseFloat((row[colProdDay] || "").replace(/[^\d.]/g, "")) || 0;
       const prodPctVal = (row[colProdPct] || "").trim();
 
+      // Robust cell-based region parsing
+      let rawRegion = colRegion !== -1 ? (row[colRegion] || "").trim() : "";
+      
+      // Dynamic fallback: scan all cells in this row to see if one contains a region name
+      if (!rawRegion) {
+        for (let c = 0; c < row.length; c++) {
+          const val = (row[c] || "").toLowerCase().trim();
+          if (
+            val === "mumbai" || val === "pune" || val === "rom" || val === "goa" ||
+            val === "rom & goa" || val === "rom&goa" || val === "r.o.m" || val.includes("rom &") ||
+            val === "mum" || val === "pun"
+          ) {
+            rawRegion = row[c];
+            break;
+          }
+        }
+      }
+
+      // Normalize region name explicitly
+      let regionVal = "Other";
+      const rawRegionLower = rawRegion.toLowerCase().trim();
+      if (rawRegionLower.includes("mumbai") || rawRegionLower === "mum") {
+        regionVal = "Mumbai";
+      } else if (rawRegionLower.includes("pune") || rawRegionLower === "pun") {
+        regionVal = "Pune";
+      } else if (
+        rawRegionLower.includes("rom") ||
+        rawRegionLower.includes("goa") ||
+        rawRegionLower.includes("r.o.m") ||
+        rawRegionLower.includes("rom & goa") ||
+        rawRegionLower.includes("rom &goa") ||
+        rawRegionLower.includes("rom&goa")
+      ) {
+        regionVal = "ROM & Goa";
+      } else if (rawRegionLower) {
+        // Keep any other explicitly stated region
+        regionVal = rawRegion;
+      }
+
       parsedRows.push({
         tl: tlName,
         trainer: trainerName,
@@ -901,6 +1039,7 @@ export async function fetchWestZonePerformanceData(
         workingDays: workingDaysVal,
         productivityDay: prodDayVal,
         productivityPct: prodPctVal,
+        region: regionVal,
       });
     }
 
@@ -927,4 +1066,106 @@ export async function fetchWestZonePerformanceData(
     };
   }
 }
+
+export interface ProductTypeCount {
+  product: string;
+  mumbaiCount: number;
+  puneCount: number;
+  romCount: number;
+  otherCount: number;
+  count: number;
+}
+
+export async function fetchProductTypeData(
+  analyticsUrl: string
+): Promise<ProductTypeCount[]> {
+  try {
+    const spreadsheetId = extractSpreadsheetId(analyticsUrl);
+    if (!spreadsheetId) {
+      return [];
+    }
+
+    // Try to extract gid from the URL, default to 590056654 if not present
+    let gid = "590056654";
+    const gidMatch = analyticsUrl.match(/[?&]gid=([0-9]+)/);
+    if (gidMatch && gidMatch[1]) {
+      gid = gidMatch[1];
+    }
+
+    const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
+    const res = await fetch(csvUrl);
+    if (!res.ok) {
+      console.warn(`Failed to fetch analytics sheet: HTTP ${res.status}`);
+      return [];
+    }
+
+    const csvText = await res.text();
+    const rows = parseCSV(csvText);
+    if (rows.length < 2) {
+      return [];
+    }
+
+    const header = rows[0].map(h => h.toLowerCase().trim());
+    const productIdx = header.findIndex(h => h === "product" || h.includes("product"));
+    const colProduct = productIdx !== -1 ? productIdx : 8; // fallback to index 8
+
+    const regionIdx = header.findIndex(h => h === "region" || h.includes("region"));
+    const colRegion = regionIdx !== -1 ? regionIdx : 11; // fallback to index 11
+
+    const counts: {
+      [product: string]: {
+        mumbaiCount: number;
+        puneCount: number;
+        romCount: number;
+        otherCount: number;
+        count: number;
+      }
+    } = {};
+
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row.length <= colProduct) continue;
+      const productVal = (row[colProduct] || "").trim();
+      if (!productVal) continue;
+
+      const regionValRaw = row.length > colRegion ? (row[colRegion] || "").trim() : "";
+      const regionLower = regionValRaw.toLowerCase();
+
+      let regionKey: "mumbaiCount" | "puneCount" | "romCount" | "otherCount" = "otherCount";
+      if (regionLower.includes("mumbai")) {
+        regionKey = "mumbaiCount";
+      } else if (regionLower.includes("pune")) {
+        regionKey = "puneCount";
+      } else if (regionLower.includes("rom") || regionLower.includes("goa")) {
+        regionKey = "romCount";
+      }
+
+      if (!counts[productVal]) {
+        counts[productVal] = {
+          mumbaiCount: 0,
+          puneCount: 0,
+          romCount: 0,
+          otherCount: 0,
+          count: 0,
+        };
+      }
+
+      counts[productVal][regionKey]++;
+      counts[productVal].count++;
+    }
+
+    const list = Object.entries(counts).map(([product, data]) => ({
+      product,
+      ...data,
+    }));
+
+    // Sort descending by count
+    list.sort((a, b) => b.count - a.count);
+    return list;
+  } catch (error) {
+    console.error("Error fetching product type data:", error);
+    return [];
+  }
+}
+
 
