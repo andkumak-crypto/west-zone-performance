@@ -1,6 +1,0 @@
-{
-  "name": "Sheets Dashboard",
-  "description": "A simple and cohesive dashboard to visualize and organize data from three different Google Sheets with seamless Google Workspace integration.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
